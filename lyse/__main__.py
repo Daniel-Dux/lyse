@@ -294,6 +294,8 @@ class Lyse(object):
         save_data['lastmultishotfolder'] = box.last_opened_routine_folder
 
         save_data['lastfileboxfolder'] = self.filebox.last_opened_shots_folder
+        save_data['keep_latest_shots_enabled'] = self.filebox.keep_latest_shots_enabled
+        save_data['keep_latest_shots_count'] = self.filebox.keep_latest_shots_count
 
         save_data['analysis_paused'] = self.filebox.analysis_paused
         window_size = self.ui.size()
@@ -360,6 +362,10 @@ class Lyse(object):
             self.multishot_routinebox.last_opened_routine_folder = save_data['lastmultishotfolder']
         if 'lastfileboxfolder' in save_data:
             self.filebox.last_opened_shots_folder = save_data['lastfileboxfolder']
+        if 'keep_latest_shots_count' in save_data:
+            self.filebox.ui.spinBox_keep_latest_shots.setValue(save_data['keep_latest_shots_count'])
+        if 'keep_latest_shots_enabled' in save_data:
+            self.filebox.ui.checkBox_keep_latest_shots.setChecked(save_data['keep_latest_shots_enabled'])
         if 'analysis_paused' in save_data and save_data['analysis_paused']:
             self.filebox.pause_analysis()
         if restore_window_geometry:

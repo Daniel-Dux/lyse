@@ -21,6 +21,7 @@ from labscript_utils.ls_zprocess import ZMQServer
 import labscript_utils.shared_drive as shared_drive
 
 # qt imports
+from qtutils.qt import QtCore
 from qtutils import inmain_decorator
 
 # Lyse imports
@@ -36,6 +37,9 @@ class WebServer(ZMQServer):
         self.app.logger.info('WebServer request: %s' % str(request_data))
         if request_data == 'hello':
             return 'hello'
+        elif request_data == 'clear shots':
+            n_removed = self._clear_all_shots()
+            return f'cleared {n_removed} shots'
         elif isinstance(request_data, tuple) and request_data[0]=='get dataframe' and len(request_data)==3:
             _, n_sequences, filter_kwargs = request_data
             df = self._retrieve_dataframe()
@@ -51,6 +55,38 @@ class WebServer(ZMQServer):
             # versions of lyse.
             return self._retrieve_dataframe()
         elif isinstance(request_data, dict):
+            if 'trim_to_n_shots' in request_data:
+                try:
+                    limit = int(request_data['trim_to_n_shots'])
+                except Exception:
+                    return 'error: trim_to_n_shots must be an integer'
+
+                if limit < 0:
+                    return 'error: trim_to_n_shots must be >= 0'
+
+                def trim_shots():
+                    table_view = self.app.filebox.ui.tableView
+                    shots_model = self.app.filebox.shots_model
+                    selection_model = table_view.selectionModel()
+                    table_model = table_view.model()
+
+                    if selection_model is None or table_model is None:
+                        return
+
+                    max_iterations = 200000
+                    iterations = 0
+                    while table_model.rowCount() > limit and iterations < max_iterations:
+                        selection_model.clearSelection()
+                        oldest_index = table_model.index(0, 0)
+                        if not oldest_index.isValid():
+                            break
+                        selection_model.select(oldest_index, QtCore.QItemSelectionModel.Select | QtCore.QItemSelectionModel.Rows)
+                        shots_model.remove_selection(confirm=False)
+                        table_view.clearSelection()
+                        iterations += 1
+
+                QtCore.QTimer.singleShot(0, trim_shots)
+                return 'trimming shots'
             if 'filepath' in request_data:
                 h5_filepath = shared_drive.path_to_local(request_data['filepath'])
                 if isinstance(h5_filepath, bytes):
@@ -65,7 +101,20 @@ class WebServer(ZMQServer):
             return "Experiment added successfully\n"
 
         return ("error: operation not supported. Recognised requests are:\n "
-                "'get dataframe'\n 'hello'\n {'filepath': <some_h5_filepath>}")
+                "'get dataframe'\n 'clear shots'\n 'hello'\n {'filepath': <some_h5_filepath>}")
+
+    @inmain_decorator(wait_for_return=True)
+    def _clear_all_shots(self):
+        table_view = self.app.filebox.ui.tableView
+        shots_model = self.app.filebox.shots_model
+        nshots = len(shots_model.dataframe)
+        if nshots == 0:
+            return 0
+
+        table_view.selectAll()
+        shots_model.remove_selection(confirm=False)
+        table_view.clearSelection()
+        return nshots
 
     @inmain_decorator(wait_for_return=True)
     def _copy_dataframe(self):

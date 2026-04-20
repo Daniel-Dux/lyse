@@ -599,6 +599,8 @@ class DataFrameModel(QtCore.QObject):
             return
         status_item = self._model.item(row_number, self.COL_STATUS)
         status_item.setData(status_percent, self.ROLE_STATUS_PERCENT)
+        if status_percent == 100 and self.app.filebox.keep_latest_shots_enabled:
+            self.keep_latest(self.app.filebox.keep_latest_shots_count)
 
     def new_row(self, filepath, done=False):
         status_item = QtGui.QStandardItem()
@@ -690,6 +692,44 @@ class DataFrameModel(QtCore.QObject):
             self.update_row(filepath, dataframe_already_updated=True)
 
         self.app.filebox.set_add_shots_progress(None, None, None)        
+
+    @inmain_decorator()
+    def keep_latest(self, n_shots):
+        """Keep only the latest n_shots rows and remove older processed rows."""
+        if n_shots is None:
+            return
+        n_shots = int(n_shots)
+        if n_shots < 1:
+            n_shots = 1
+
+        n_rows_model = self._model.rowCount()
+        n_rows_df = len(self.dataframe)
+        if n_rows_model <= n_shots:
+            return
+
+        excess = n_rows_model - n_shots
+        rows_to_remove = []
+        for row in range(n_rows_model):
+            status_item = self._model.item(row, self.COL_STATUS)
+            if status_item.data(self.ROLE_STATUS_PERCENT) == 100:
+                rows_to_remove.append(row)
+                if len(rows_to_remove) >= excess:
+                    break
+
+        if not rows_to_remove:
+            return
+
+        valid_df_rows = [row for row in rows_to_remove if row < n_rows_df]
+        if valid_df_rows:
+            keep_mask = np.ones(n_rows_df, dtype=bool)
+            keep_mask[valid_df_rows] = False
+            self.dataframe = self.dataframe.iloc[keep_mask]
+        self.dataframe.index = pandas.Index(range(len(self.dataframe)))
+
+        for row in reversed(rows_to_remove):
+            self._model.removeRow(row)
+
+        self.renumber_rows()
             
 
     @inmain_decorator()
@@ -727,6 +767,23 @@ class FileBox(object):
 
         self.last_opened_shots_folder = self.exp_config.get('paths', 'experiment_shot_storage')
 
+        try:
+            self.keep_latest_shots_enabled = self.exp_config.getboolean('lyse', 'keep_latest_shots_enabled')
+        except (LabConfig.NoOptionError, LabConfig.NoSectionError, ValueError):
+            self.keep_latest_shots_enabled = False
+
+        try:
+            self.keep_latest_shots_count = self.exp_config.getint('lyse', 'keep_latest_shots_count')
+        except (LabConfig.NoOptionError, LabConfig.NoSectionError, ValueError):
+            self.keep_latest_shots_count = 100
+        if self.keep_latest_shots_count < 1:
+            self.keep_latest_shots_count = 1
+
+        self.ui.checkBox_keep_latest_shots.setChecked(self.keep_latest_shots_enabled)
+        self.ui.spinBox_keep_latest_shots.setValue(self.keep_latest_shots_count)
+        self.ui.spinBox_keep_latest_shots.setEnabled(self.keep_latest_shots_enabled)
+        self.ui.spinBox_keep_latest_shots.setKeyboardTracking(False)
+
         self.connect_signals()
 
         self.analysis_paused = False
@@ -763,6 +820,8 @@ class FileBox(object):
         self.ui.pushButton_analysis_running.toggled.connect(self.on_analysis_running_toggled)
         self.ui.pushButton_mark_as_not_done.clicked.connect(self.on_mark_selection_not_done_clicked)
         self.ui.pushButton_run_multishot_analysis.clicked.connect(self.on_run_multishot_analysis_clicked)
+        self.ui.checkBox_keep_latest_shots.toggled.connect(self.on_keep_latest_shots_toggled)
+        self.ui.spinBox_keep_latest_shots.valueChanged.connect(self.on_keep_latest_shots_count_changed)
         
     def on_edit_columns_clicked(self):
         self.edit_columns_dialog.show()
@@ -811,6 +870,17 @@ class FileBox(object):
     def on_run_multishot_analysis_clicked(self):
         self.multishot_required = True
         self.analysis_pending.set()
+
+    def on_keep_latest_shots_toggled(self, checked):
+        self.keep_latest_shots_enabled = checked
+        self.ui.spinBox_keep_latest_shots.setEnabled(checked)
+        if checked:
+            self.shots_model.keep_latest(self.keep_latest_shots_count)
+
+    def on_keep_latest_shots_count_changed(self, value):
+        self.keep_latest_shots_count = value
+        if self.keep_latest_shots_enabled:
+            self.shots_model.keep_latest(value)
         
     def set_columns_visible(self, columns_visible):
         self.shots_model.set_columns_visible(columns_visible)
@@ -899,6 +969,8 @@ class FileBox(object):
                     del filepaths[i]
                 if filepaths:
                     self.shots_model.add_files(filepaths, new_row_data)
+                    if self.keep_latest_shots_enabled:
+                        self.shots_model.keep_latest(self.keep_latest_shots_count)
                     # Let the analysis loop know to look for new shots:
                     self.analysis_pending.set()
                 if shots_remaining == 0:

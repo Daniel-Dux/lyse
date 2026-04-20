@@ -230,6 +230,32 @@ QGroupBox
            </widget>
           </item>
           <item>
+           <widget class="QCheckBox" name="checkBox_keep_latest_shots">
+            <property name="toolTip">
+             <string>Keep only the newest n shots and remove older shots automatically</string>
+            </property>
+            <property name="text">
+             <string>Keep latest</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QSpinBox" name="spinBox_keep_latest_shots">
+            <property name="toolTip">
+             <string>Number of newest shots to retain</string>
+            </property>
+            <property name="minimum">
+             <number>1</number>
+            </property>
+            <property name="maximum">
+             <number>1000000</number>
+            </property>
+            <property name="value">
+             <number>100</number>
+            </property>
+           </widget>
+          </item>
+          <item>
            <spacer name="horizontalSpacer_2">
             <property name="orientation">
              <enum>Qt::Horizontal</enum>
