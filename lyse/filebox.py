@@ -333,6 +333,33 @@ class DataFrameModel(QtCore.QObject):
     def on_remove_selection(self):
         self.remove_selection()
 
+    def _remove_rows_from_model(self, rows):
+        """Remove rows from the Qt model without freezing the UI.
+
+        Calling removeRow() individually emits a signal and triggers a view layout
+        update for each row. For hundreds of rows this blocks the event loop long
+        enough that the OS reports "not responding". Grouping contiguous rows into a
+        single removeRows(first, count) call reduces the number of signal/layout
+        cycles from O(N) to O(number of contiguous groups) — typically just one call
+        when the user selects a contiguous range or uses "select all".
+        """
+        ascending = sorted(rows)
+        if not ascending:
+            return
+        # Build list of (first_row, count) for each contiguous group:
+        ranges = []
+        start = end = ascending[0]
+        for row in ascending[1:]:
+            if row == end + 1:
+                end = row
+            else:
+                ranges.append((start, end - start + 1))
+                start = end = row
+        ranges.append((start, end - start + 1))
+        # Remove highest-index ranges first so earlier row indices remain valid:
+        for first, count in reversed(ranges):
+            self._model.removeRows(first, count)
+
     def remove_selection(self, confirm=True):
         selection_model = self._view.selectionModel()
         selected_indexes = selection_model.selectedRows()
@@ -341,13 +368,15 @@ class DataFrameModel(QtCore.QObject):
             return
         if confirm and not lyse.utils.gui.question_dialog(self.app, "Remove %d shots?" % len(selected_name_items)):
             return
+        # Extract row numbers before any model modification: QModelIndexes become invalid
+        # after rows are removed, and QStandardItems can be deleted by Qt as rows are removed,
+        # making name_item.row() raise RuntimeError on subsequent iterations.
+        rows_to_remove = sorted(set(index.row() for index in selected_indexes), reverse=True)
         # Remove from DataFrame first:
-        self.dataframe = self.dataframe.drop(index.row() for index in selected_indexes)
+        self.dataframe = self.dataframe.drop(rows_to_remove)
         self.dataframe.index = pandas.Index(range(len(self.dataframe)))
-        # Delete one at a time from Qt model:
-        for name_item in selected_name_items:
-            row = name_item.row()
-            self._model.removeRow(row)
+        # Remove from Qt model in batches of contiguous rows:
+        self._remove_rows_from_model(rows_to_remove)
         self.renumber_rows()
 
     def mark_selection_not_done(self):
@@ -726,9 +755,7 @@ class DataFrameModel(QtCore.QObject):
             self.dataframe = self.dataframe.iloc[keep_mask]
         self.dataframe.index = pandas.Index(range(len(self.dataframe)))
 
-        for row in reversed(rows_to_remove):
-            self._model.removeRow(row)
-
+        self._remove_rows_from_model(rows_to_remove)
         self.renumber_rows()
             
 
